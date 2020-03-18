@@ -1,0 +1,170 @@
+#!/usr/bin/perl -w
+# -*-  perl -*-
+
+=head1 NAME
+
+munin plugin for MZK-750DHP router
+
+https://www.planex.co.jp/products/mzk-750dhp/
+
+=head1 APPLICABLE SYSTEMS
+
+=head1 CONFIGURATION
+
+[mzk750*]
+    env.mzk750addr 192.168.0.1
+    env.mzk750user username
+    env.mzk750pass password
+
+
+=head1 USAGE
+
+Link this plugin to /etc/munin/plugins/ and restart the munin-node.
+
+=head1 MAGIC MARKERS
+
+  #%# family=auto
+  #%# capabilities=autoconf
+
+=head1 BUGS
+
+=head1 VERSION
+
+  $Id$
+
+=head1 AUTHOR
+
+ZUKERAN "zu2" shin
+
+=head1 LICENSE
+
+GPLv2
+
+=cut
+
+use strict;
+use warnings;
+use Munin::Plugin;
+
+use utf8;
+use strict;
+use warnings;
+use Web::Scraper;
+use WWW::Mechanize;
+use Data::Dumper;
+use Web::Scraper;
+use URI;
+binmode STDOUT => ":utf8";
+
+my %config = (
+    'user'       => $ENV{'mzk750addr'}	|| '192.168.0.1',
+    'user'       => $ENV{'mzk750user'}	|| 'root',
+    'password'   => $ENV{'mzk750pass'}	|| 'admin',
+);
+
+my $mode = ($ARGV[0] or "print");
+
+if ($mode eq 'autoconf' ) {
+    if (`/usr/bin/perl $0` eq '') {
+        print "no (no devices to monitor)\n";
+        exit 1;
+    } else {
+        print "yes\n";
+        exit 0;
+    }
+}
+
+if ($mode eq 'config' ) {
+    print <<-"END";
+    multigraph  mzk750dhp_wan
+    graph_title MZK-750DHP WAN traffic(Bytes)
+    graph_args -l 0
+    graph_vlabel Bytes
+    graph_category lan
+    WANRxBytes.label WAN Receive
+    WANTxBytes.label WAN Send
+    multigraph  mzk750dhp_wan_month
+    graph_title MZK-750DHP WAN traffic(Monthly Bytes)
+    graph_args -l 0
+    graph_vlabel Bytes
+    graph_category lan
+    WANRxBytesMonth.label WAN Receive
+    WANTxBytesMonth.label WAN Send
+    multigraph  mzk750dhp_wan_day
+    graph_title MZK-750DHP WAN traffic(Daily Bytes)
+    graph_args -l 0
+    graph_vlabel Bytes
+    graph_category lan
+    WANRxBytesDay.label WAN Receive
+    WANTxBytesDay.label WAN Send
+    multigraph  mzk750dhp_wan_bps
+    graph_title MZK-750DHP WAN traffic(bit/s)
+    graph_args -l 0
+    graph_vlabel bit/sec
+    graph_category lan
+    WANRxBps.label WAN Receive
+    WANTxBps.label WAN Send
+    END;
+
+    exit 0;
+}
+
+my $ua = WWW::Mechanize->new;
+$ua->credentials($config{'addr'}.':80', 'MZK-750DHP',
+		$config{'user'}, $config{'pass'});
+$ua->get("http://'.$config{'addr'}.'/adm/statistic.asp');
+
+my $scraper = scraper {
+	process '//td[@id="statisticWANRxBytes"]/../td[2]','Rx'=>'TEXT';
+	process '//td[@id="statisticWANTxBytes"]/../td[2]','Tx'=>'TEXT';
+};
+my $result = $scraper->scrape($ua->content);
+my $WANRx = $result->{Rx};
+my $WANTx = $result->{Tx};
+
+my $t = time;
+my %bytes;
+%bytes = restore_state();
+
+print "multigraph mzk750dhp_wan\n";
+print "WANRxBytes.value ",$WANRx,"\n";
+print "WANTxBytes.value ",$WANTx,"\n";
+
+if(exists($bytes{'time'}) && $bytes{'time'}>0 && $t>$bytes{'time'}){
+print "multigraph mzk750dhp_wan_bps\n";
+my $WANRxBps = ($WANRx - $bytes{'Rx'})*8/($t-$bytes{'time'});
+my $WANTxBps = ($WANTx - $bytes{'Tx'})*8/($t-$bytes{'time'});
+$WANRxBps = "U" if ($WANRxBps>10*1000*1000*1000); # 10Mbps
+$WANRxBps = "U" if ($WANRxBps<0);
+$WANTxBps = "U" if ($WANTxBps>10*1000*1000*1000); # 10Mbps
+$WANTxBps = "U" if ($WANTxBps<0);
+print "WANRxBps.value ",$WANRxBps,"\n";
+print "WANTxBps.value ",$WANTxBps,"\n";
+
+if((localtime($t))[3] != (localtime($bytes{'time'}))[3]) {
+	$bytes{'DayWANRx'}=$WANRx;
+	$bytes{'DayWANTx'}=$WANTx;
+}
+if(!exists($bytes{'DayWANRx'}) || $bytes{'DayWANRx'}>$WANRx){ $bytes{'DayWANRx'}=$WANRx };
+if(!exists($bytes{'DayWANTx'}) || $bytes{'DayWANTx'}>$WANTx){ $bytes{'DayWANTx'}=$WANTx };
+print "multigraph mzk750dhp_wan_day\n";
+print "WANRxBytesDay.value ",($WANRx - $bytes{'DayWANRx'}),"\n";
+print "WANTxBytesDay.value ",($WANTx - $bytes{'DayWANTx'}),"\n";
+
+if((localtime($t))[4] != (localtime($bytes{'time'}))[4]) {
+	$bytes{'MonthWANRx'}=$WANRx;
+	$bytes{'MonthWANTx'}=$WANTx;
+}
+if(!exists($bytes{'MonthWANRx'}) || $bytes{'MonthWANRx'}>$WANRx){ $bytes{'MonthWANRx'}=$WANRx };
+if(!exists($bytes{'MonthWANTx'}) || $bytes{'MonthWANTx'}>$WANTx){ $bytes{'MonthWANTx'}=$WANTx };
+print "multigraph mzk750dhp_wan_month\n";
+print "WANRxBytesMonth.value ",($WANRx - $bytes{'MonthWANRx'}),"\n";
+print "WANTxBytesMonth.value ",($WANTx - $bytes{'MonthWANTx'}),"\n";
+
+$bytes{'time'} = $t;
+$bytes{'WANRx'} = $WANRx;
+$bytes{'WANTx'} = $WANTx;
+
+save_state(%bytes);
+
+exit 0;
